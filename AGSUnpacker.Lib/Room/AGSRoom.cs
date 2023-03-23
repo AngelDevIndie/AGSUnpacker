@@ -1,10 +1,12 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
 
 using AGSUnpacker.Lib.Graphics;
 using AGSUnpacker.Lib.Shared;
+using AGSUnpacker.Lib.Shared.FormatExtensions;
 using AGSUnpacker.Lib.Shared.Interaction;
 using AGSUnpacker.Shared.Extensions;
 using AGSUnpacker.Shared.Utils.Encryption;
@@ -37,12 +39,12 @@ namespace AGSUnpacker.Lib.Room
     13:  v2.14, add walkarea light levels
     14:  v2.4, fixed so it saves walkable area 15
     15:  v2.41, supports NewInteraction
-    16:  v2.5
+    16:  v2.5 - (what changed?)
     17:  v2.5 - just version change to force room re-compile for new charctr struct
     18:  v2.51 - vector scaling
     19:  v2.53 - interaction variables
     20:  v2.55 - shared palette backgrounds
-    21:  v2.55 - regions
+    21:  v2.55 - regions (same realese?)
     22:  v2.61 - encrypt room messages (first seen in v2.56d) + added properties block
     23:  v2.62 - object flags
     24:  v2.7  - hotspot script names + added object script names block
@@ -51,6 +53,11 @@ namespace AGSUnpacker.Lib.Room
     27:  v3.0 - store Y of bottom of object, not top
     28:  v3.0.3 - remove hotspot name length limit
     29:  v3.0.3 - high-res coords for object x/y, edges and hotspot walk-to point
+    30:  v3.4.0.4 - tint luminance for regions
+    31:  v3.4.1.5 - removed room object and hotspot name length limits
+    32:  v3.5.0 - 64-bit file offsets
+    33:  v3.5.0.8 - deprecated room resolution, added mask resolution
+    33:  v3.6.0 - extension blocks (no version bump?)
     */
     public int Version;
     public string Name;
@@ -69,6 +76,10 @@ namespace AGSUnpacker.Lib.Room
     public AGSInteractions Interactions;
     public AGSMessage[] Messages;
 
+    public AGSRoomDeprecated Deprecated;
+
+    public Dictionary<string, string> Options;
+
     public AGSRoom()
       : this(string.Empty)
     {
@@ -78,7 +89,7 @@ namespace AGSUnpacker.Lib.Room
     public AGSRoom(string name)
     {
       Version = 29;
-      this.Name = name;
+      Name = name;
       Width = 320;
       Height = 200;
       ResolutionType = 1;
@@ -93,9 +104,26 @@ namespace AGSUnpacker.Lib.Room
       Properties = new AGSRoomProperties(Markup);
       Interactions = new AGSInteractions();
       Messages = new AGSMessage[0];
+
+      Deprecated = new AGSRoomDeprecated();
+
+      Options = new Dictionary<string, string>();
     }
 
-    public void ReadFromFile(string filepath)
+    public static AGSRoom ReadFromFile(string filepath)
+    {
+      AGSRoom room = new AGSRoom();
+
+      using FileStream stream = new FileStream(filepath, FileMode.Open, FileAccess.Read);
+      using BinaryReader reader = new BinaryReader(stream, Encoding.Latin1);
+
+      room.ReadFromStream(reader);
+
+      return room;
+    }
+
+    // FIXME(adm244): remove this
+    public void ReadFromFileDeprecated(string filepath)
     {
       using (FileStream stream = new FileStream(filepath, FileMode.Open))
       {
@@ -115,23 +143,35 @@ namespace AGSUnpacker.Lib.Room
 
       while (true)
       {
-        byte blockTypeRead = reader.ReadByte();
-        if (!Enum.IsDefined(typeof(BlockType), (int)blockTypeRead))
-          throw new InvalidDataException($"Unknown room block encountered: {blockTypeRead}");
+        ExtensionBlock.BlockType blockType = ExtensionBlock.ReadSingle(reader, ReadRoomExtensionBlock,
+          ExtensionBlock.Options.Id8 | ExtensionBlock.Options.Size64);
+        BlockType roomBlockType = (BlockType)blockType;
 
-        BlockType blockType = (BlockType)blockTypeRead;
-        if (blockType == BlockType.EndOfFile)
+        if (roomBlockType == BlockType.EndOfFile)
           break;
 
-        ReadRoomBlock(reader, Version, blockType);
+        bool isExtensionBlock = Enum.IsDefined(blockType) && blockType >= 0;
+        bool isRoomBlock = Enum.IsDefined(roomBlockType);
+
+        if (isExtensionBlock)
+          continue;
+
+        if (!isRoomBlock)
+          throw new InvalidDataException($"Unknown block type encountered: {blockType}");
+
+        ReadRoomBlock(reader, Version, roomBlockType);
       }
     }
 
-    //NOTE(adm244): do we care about passing roomVersion here?
     public void WriteToFile(string filePath, int roomVersion)
     {
+      //TODO(adm244): this entire room reading/writing code is a mess
+      // and not only AGS is to blame here, consider "encapsulating" version specifics
+
       using (FileStream stream = new FileStream(filePath, FileMode.Create))
       {
+        //FIXME(adm244): considering AGS now claims to support unicode, it's no longer valid
+        // to use Latin1 encoding to read "unicode compatable" files
         using (BinaryWriter writer = new BinaryWriter(stream, Encoding.Latin1))
         {
           writer.Write((UInt16)roomVersion);
@@ -142,6 +182,7 @@ namespace AGSUnpacker.Lib.Room
           if (!string.IsNullOrEmpty(Script.SourceCode))
             WriteRoomBlock(writer, roomVersion, BlockType.ScriptSource);
 
+          //FIXME(adm244): write only if it's not null
           WriteRoomBlock(writer, roomVersion, BlockType.ObjectNames);
 
           if (Background.Frames.Count > 1)
@@ -152,8 +193,16 @@ namespace AGSUnpacker.Lib.Room
           if (roomVersion >= 22)
             WriteRoomBlock(writer, roomVersion, BlockType.Properties);
 
+          //FIXME(adm244): write only if it's not null
           if (roomVersion >= 24)
             WriteRoomBlock(writer, roomVersion, BlockType.ObjectScriptNames);
+
+          if (roomVersion >= 33)
+          {
+            if (Options.Count > 0)
+              ExtensionBlock.WriteSingle(writer, "ext_sopts", WriteRoomExtensionBlock,
+                ExtensionBlock.Options.Id8 | ExtensionBlock.Options.Size64);
+          }
 
           WriteRoomBlock(writer, roomVersion, BlockType.EndOfFile);
         }
@@ -176,9 +225,63 @@ namespace AGSUnpacker.Lib.Room
         writer.Write((Int64)length);
     }
 
+    private bool ReadRoomExtensionBlock(BinaryReader reader, string id, long size)
+    {
+      switch (id)
+      {
+        case "ext_sopts":
+          return ReadOptionsExtensionBlock(reader);
+
+        default:
+          Debug.Assert(false, $"Room extension block '{id}' is not supported!");
+          return false;
+      }
+    }
+
+    private bool WriteRoomExtensionBlock(BinaryWriter writer, string id)
+    {
+      switch (id)
+      {
+        case "ext_sopts":
+          return WriteOptionsExtensionBlock(writer);
+
+        default:
+          throw new NotImplementedException($"Room extension block '{id}' is not implemented!");
+      }
+    }
+
+    private bool ReadOptionsExtensionBlock(BinaryReader reader)
+    {
+      int count = reader.ReadInt32();
+
+      for (int i = 0; i < count; ++i)
+      {
+        string key = reader.ReadPrefixedString32();
+        string value = reader.ReadPrefixedString32();
+
+        Options.Add(key, value);
+      }
+
+      return true;
+    }
+
+    private bool WriteOptionsExtensionBlock(BinaryWriter writer)
+    {
+      writer.Write((Int32)Options.Count);
+
+      foreach (var option in Options)
+      {
+        writer.WritePrefixedString32(option.Key);
+        writer.WritePrefixedString32(option.Value);
+      }
+
+      return true;
+    }
+
     private void ReadRoomBlock(BinaryReader reader, int roomVersion, BlockType type)
     {
       //TODO(adm244): unused for now, maybe we should check it after reading a block
+      // OR redesign reading\writing so blocks are read into memory and then parsed?
       Int64 length = ReadRoomBlockLength(reader, roomVersion);
 
       switch (type)
@@ -282,8 +385,11 @@ namespace AGSUnpacker.Lib.Room
       if (roomVersion >= 6) // ???
         ReadLegacyRoomAnimations(reader, roomVersion);
 
-      if ((roomVersion >= 4) && (roomVersion < 16)) // ???
+      if ((roomVersion >= 4) && (roomVersion < 16)) // ???, 2.5
+      {
+        ReadLegacyScriptConfig(reader, roomVersion);
         ReadLegacyGraphicalScripts(reader, roomVersion);
+      }
 
       ReadAreasLightLevels(reader, roomVersion);
       ReadRoomBitmaps(reader, roomVersion);
@@ -309,8 +415,11 @@ namespace AGSUnpacker.Lib.Room
       if (roomVersion >= 6)
         WriteLegacyRoomAnimations(writer, roomVersion);
 
-      if ((roomVersion >= 4) && (roomVersion < 16)) // ???
+      if ((roomVersion >= 4) && (roomVersion < 16)) // ???, 2.5
+      {
+        WriteLegacyScriptConfig(writer, roomVersion);
         WriteLegacyGraphicalScripts(writer, roomVersion);
+      }
 
       WriteAreasLightLevels(writer, roomVersion);
       WriteRoomBitmaps(writer, roomVersion);
@@ -339,6 +448,17 @@ namespace AGSUnpacker.Lib.Room
     private void ReadHotspots(BinaryReader reader, int roomVersion)
     {
       Int32 count = reader.ReadInt32();
+
+      if (Version < 15) // 2.41 (never released?)
+      {
+        for (int i = 0; i < Deprecated.HotspotConditions.Length; ++i)
+          Deprecated.HotspotConditions[i] = AGSEventBlock.ReadFromStream(reader);
+
+        for (int i = 0; i < Deprecated.ObjectConditions.Length; ++i)
+          Deprecated.ObjectConditions[i] = AGSEventBlock.ReadFromStream(reader);
+
+        Deprecated.MiscConditions = AGSEventBlock.ReadFromStream(reader);
+      }
 
       Markup.Hotspots = new AGSHotspot[count];
       for (int i = 0; i < Markup.Hotspots.Length; ++i)
@@ -377,6 +497,17 @@ namespace AGSUnpacker.Lib.Room
     private void WriteRoomHotspots(BinaryWriter writer, int roomVersion)
     {
       writer.Write((Int32)Markup.Hotspots.Length);
+
+      if (Version < 15) // 2.41 (never released?)
+      {
+        for (int i = 0; i < Deprecated.HotspotConditions.Length; ++i)
+          Deprecated.HotspotConditions[i].WriteToStream(writer);
+
+        for (int i = 0; i < Deprecated.ObjectConditions.Length; ++i)
+          Deprecated.ObjectConditions[i].WriteToStream(writer);
+
+        Deprecated.MiscConditions.WriteToStream(writer);
+      }
 
       for (int i = 0; i < Markup.Hotspots.Length; ++i)
       {
@@ -551,16 +682,19 @@ namespace AGSUnpacker.Lib.Room
 
     private void ReadInteractions(BinaryReader reader, int roomVersion)
     {
-      if (roomVersion >= 19) // ???
+      if (roomVersion >= 19) // 2.53
       {
         Int32 interactionVariablesCount = reader.ReadInt32();
 
-        //TODO(adm244): implement old interaction variables reader
-        if (interactionVariablesCount > 0)
-          throw new NotImplementedException("CRM: Interaction variables reader is not implemented.");
+        Interactions.InteractionsLegacy = new AGSInteractionLegacy[interactionVariablesCount];
+        for (int i = 0; i < interactionVariablesCount; ++i)
+        {
+          Interactions.InteractionsLegacy[i] = new AGSInteractionLegacy();
+          Interactions.InteractionsLegacy[i].ReadFromStream(reader);
+        }
       }
 
-      if (roomVersion >= 15) // ???
+      if (roomVersion >= 15) // 2.41 (never released?)
       {
         if (roomVersion < 26) // ???
           ReadInteractionsOld(reader, roomVersion);
@@ -584,8 +718,14 @@ namespace AGSUnpacker.Lib.Room
     private void WriteInteractions(BinaryWriter writer, int roomVersion)
     {
       if (roomVersion >= 19) // ???
-        //TODO(adm244): implement old interaction variables writer
-        writer.Write((Int32)0x0);
+      {
+        writer.Write((Int32)Interactions.InteractionsLegacy.Length);
+
+        for (int i = 0; i < Interactions.InteractionsLegacy.Length; ++i)
+        {
+          Interactions.InteractionsLegacy[i].WriteToStream(writer);
+        }
+      }
 
       if (roomVersion >= 15) // ???
       {
@@ -655,8 +795,8 @@ namespace AGSUnpacker.Lib.Room
 
     private void ReadWalkableAreasInfo(BinaryReader reader, int roomVersion)
     {
-      Int32 count = 0;
-      if (roomVersion >= 14) // ???
+      Int32 count = 15;
+      if (roomVersion >= 14) // 2.4
         count = reader.ReadInt32();
 
       Markup.WalkableAreas = new AGSWalkableArea[count];
@@ -857,16 +997,64 @@ namespace AGSUnpacker.Lib.Room
       writer.Write((Int16)0x0);
     }
 
+    private void ReadLegacyScriptConfig(BinaryReader reader, int roomVersion)
+    {
+      int version = reader.ReadInt32();
+      if (version != 1)
+        throw new NotSupportedException($"Unknown script configuration version detected: {version}");
+
+      int count = reader.ReadInt32();
+
+      Deprecated.VariableNames = new string[count];
+      for (int i = 0; i < Deprecated.VariableNames.Length; ++i)
+        Deprecated.VariableNames[i] = reader.ReadPrefixedString8();
+    }
+
+    private void WriteLegacyScriptConfig(BinaryWriter writer, int roomVersion)
+    {
+      writer.Write((Int32)1);
+      writer.Write((Int32)Deprecated.VariableNames.Length);
+
+      for (int i = 0; i < Deprecated.VariableNames.Length; ++i)
+        writer.WritePrefixedString8(Deprecated.VariableNames[i]);
+    }
+
     private void ReadLegacyGraphicalScripts(BinaryReader reader, int roomVersion)
     {
-      //TODO(adm244): implement legacy room graphical scripts reader
-      throw new NotImplementedException("CRM: Legacy graphical scripts reader is not implemented.");
+      // NOTE(adm244): 2.31 has 20 script blocks limit
+      for (int i = 0; i < 20 && !reader.EOF(); ++i)
+      {
+        int id = reader.ReadInt32();
+        if (id == -1)
+          break;
+
+        int size = reader.ReadInt32();
+        long start = reader.BaseStream.Position;
+
+        AGSGraphicalScript script = AGSGraphicalScript.ReadFromStream(reader, id);
+        Deprecated.GraphicalScripts.Add(script);
+
+        long end = reader.BaseStream.Position;
+        if ((end - start) != size)
+          throw new InvalidDataException($"Invalid graphical script size.\n\nGot: {end - start}\nExpected: {size}");
+      }
     }
 
     private void WriteLegacyGraphicalScripts(BinaryWriter writer, int roomVersion)
     {
-      //TODO(adm244): implement legacy room graphical scripts writer
-      throw new NotImplementedException("CRM: Legacy graphical scripts writer is not implement.");
+      for (int i = 0; i < Deprecated.GraphicalScripts.Count; ++i)
+      {
+        writer.Write((Int32)Deprecated.GraphicalScripts[i].Id);
+
+        long sizePosition = writer.BaseStream.Position;
+        writer.Write((UInt32)0xDEADBEEF);
+
+        Deprecated.GraphicalScripts[i].WriteToStream(writer);
+
+        writer.FixInt32(sizePosition);
+      }
+
+      writer.Write((Int32)(-1));
     }
 
     private void ReadAreasLightLevels(BinaryReader reader, int roomVersion)
@@ -876,6 +1064,10 @@ namespace AGSUnpacker.Lib.Room
         // read walkable areas light level (unused?)
         for (int i = 0; i < Markup.WalkableAreas.Length; ++i)
           Markup.WalkableAreas[i].Light = reader.ReadInt16();
+
+        // FIXME(adm244): dirty quick fix for walkies count debacle
+        if (roomVersion < 14)
+          reader.ReadInt16();
       }
 
       if (roomVersion >= 21) // ???
@@ -895,8 +1087,12 @@ namespace AGSUnpacker.Lib.Room
       if (roomVersion >= 8) // ???
       {
         // write walkable areas light level (unused)
-        for (int i = 0; i < 16; ++i)
+        for (int i = 0; i < Markup.WalkableAreas.Length; ++i)
           writer.Write((Int16)Markup.WalkableAreas[i].Light);
+
+        // FIXME(adm244): dirty quick fix for walkies count debacle
+        if (roomVersion < 14)
+          writer.Write((Int16)0);
       }
 
       if (roomVersion >= 21) // ???

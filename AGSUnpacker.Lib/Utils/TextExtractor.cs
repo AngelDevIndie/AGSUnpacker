@@ -95,10 +95,9 @@ namespace AGSUnpacker.Lib.Utils
 
         for (int i = 0; i < filenames.Length; ++i)
         {
-          int index = filenames[i].LastIndexOf('.');
-          string fileExtension = filenames[i].Substring(index + 1);
+          string fileExtension = Path.GetExtension(filenames[i].ToLower());
 
-          if (fileExtension == "dta")
+          if (fileExtension == ".dta")
           {
             Console.Write("\tParsing {0} data file...", Path.GetFileName(filenames[i]));
 
@@ -106,12 +105,12 @@ namespace AGSUnpacker.Lib.Utils
 
             Console.WriteLine(" Done!");
           }
-          else if (fileExtension == "crm")
+          else if (fileExtension == ".crm")
           {
             Console.Write("\tParsing {0} room file...", Path.GetFileName(filenames[i]));
 
             AGSRoom room = new AGSRoom(Path.GetFileNameWithoutExtension(filenames[i]));
-            room.ReadFromFile(filenames[i]);
+            room.ReadFromFileDeprecated(filenames[i]);
             rooms.Add(room);
 
             Console.WriteLine(" Done!");

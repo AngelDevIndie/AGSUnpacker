@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -12,7 +13,8 @@ using AGSUnpacker.Lib.Utils;
 using AGSUnpacker.UI.Core;
 using AGSUnpacker.UI.Services;
 
-using Microsoft.Toolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Input;
+
 using Microsoft.Win32;
 
 namespace AGSUnpacker.UI.Views.Windows
@@ -60,7 +62,7 @@ namespace AGSUnpacker.UI.Views.Windows
     {
       try
       {
-        await UnpackAsync("Select AGS game executable", "AGS game executable|*.exe",
+        await UnpackAsync("Select AGS game archive", "AGS archive|*.ags;*.exe",
         (filepath, targetFolder) =>
         {
           AssetsManager assetsManager = AssetsManager.Create(filepath);
@@ -281,6 +283,100 @@ namespace AGSUnpacker.UI.Views.Windows
       _windowService.Show(new RoomManagerWindowViewModel(_windowService));
     }
     #endregion
+
+    #region ExtractScriptsCommand
+    private IAsyncRelayCommand _extractScriptsCommand;
+    public IAsyncRelayCommand ExtractScriptsCommand
+    {
+      get => _extractScriptsCommand;
+      set => SetProperty(ref _extractScriptsCommand, value);
+    }
+
+    private Task OnExtractScriptsExecute()
+    {
+      return ExtractAsync("Select AGS game executable", "AGS game executable|*.exe",
+        (filepath, sourceFolder) =>
+        {
+          string targetFolder = Path.Combine(sourceFolder, "Scripts");
+          ScriptManager.ExtractFromFolder(sourceFolder, targetFolder);
+        }
+      );
+    }
+
+    private bool OnCanExtractScriptsExecute()
+    {
+      return !ExtractScriptsCommand.IsRunning;
+    }
+    #endregion
+
+    #region InjectScriptCommand
+    private IAsyncRelayCommand _injectScriptCommand;
+    public IAsyncRelayCommand InjectScriptCommand
+    {
+      get => _injectScriptCommand;
+      set => SetProperty(ref _injectScriptCommand, value);
+    }
+
+    private Task OnInjectScriptExecute()
+    {
+      return SelectFilesAsync(
+        (filenames) =>
+        {
+          ScriptManager.Inject(filenames[0], filenames[1]);
+        },
+        new DialogOptions
+        {
+          Title = "Select asset file to inject into",
+          Filter = "Game data or room file|*.dta;*.crm"
+        },
+        new DialogOptions
+        {
+          Title = "Select script object file to inject",
+          Filter = "SCOM3 script file|*." + ScriptManager.ScriptFileExtension
+        }
+      );
+    }
+
+    private bool OnCanInjectScriptExecute()
+    {
+      return !InjectScriptCommand.IsRunning;
+    }
+    #endregion
+
+    #region ReplaceScriptTextCommand
+    private IAsyncRelayCommand _replaceScriptTextCommand;
+    public IAsyncRelayCommand ReplaceScriptTextCommand
+    {
+      get => _replaceScriptTextCommand;
+      set => SetProperty(ref _replaceScriptTextCommand, value);
+    }
+
+    private Task OnReplaceScriptTextCommand()
+    {
+      return SelectFilesAsync(
+        (filenames) =>
+        {
+          ScriptManager.ReplaceText(filenames[0], filenames.AsSpan(1).ToArray());
+        },
+        new DialogOptions
+        {
+          Title = "Select trs file to get replacements from",
+          Filter = "Translation source file|*.trs"
+        },
+        new DialogOptions
+        {
+          Title = "Select one or more script files",
+          Filter = "SCOM3 script file|*." + ScriptManager.ScriptFileExtension,
+          Multiselect = true
+        }
+      );
+    }
+
+    private bool OnCanReplaceScriptTextCommand()
+    {
+      return !ReplaceScriptTextCommand.IsRunning;
+    }
+    #endregion
     #endregion
 
     // FIXME(adm244): code duplication; see RoomManagerWindowViewModel
@@ -300,6 +396,30 @@ namespace AGSUnpacker.UI.Views.Windows
 
       return Task.Run(
         () => action(openDialog.FileName)
+      );
+    }
+
+    private Task SelectFilesAsync(Action<string[]> action, params DialogOptions[] options)
+    {
+      List<string> filenames = new List<string>();
+
+      OpenFileDialog openDialog = new OpenFileDialog();
+      for (int i = 0; i < options.Length; ++i)
+      {
+        openDialog.Title = options[i].Title;
+        openDialog.Filter = options[i].Filter;
+        openDialog.Multiselect = options[i].Multiselect;
+        openDialog.CheckFileExists = true;
+        openDialog.CheckPathExists = true;
+
+        if (openDialog.ShowDialog(_windowService.GetWindow(this)) != true)
+          return Task.CompletedTask;
+
+        filenames.AddRange(openDialog.FileNames);
+      }
+
+      return Task.Run(
+        () => action(filenames.ToArray())
       );
     }
 
@@ -463,10 +583,33 @@ namespace AGSUnpacker.UI.Views.Windows
       CompileTranslationCommand = new AsyncRelayCommand(OnCompileTraslationExecute, OnCanCompileTranslationExecute);
       CompileTranslationCommand.PropertyChanged += OnPropertyChanged;
 
+      ExtractScriptsCommand = new AsyncRelayCommand(OnExtractScriptsExecute, OnCanExtractScriptsExecute);
+      ExtractScriptsCommand.PropertyChanged += OnPropertyChanged;
+
+      InjectScriptCommand = new AsyncRelayCommand(OnInjectScriptExecute, OnCanInjectScriptExecute);
+      InjectScriptCommand.PropertyChanged += OnPropertyChanged;
+
+      ReplaceScriptTextCommand = new AsyncRelayCommand(OnReplaceScriptTextCommand, OnCanReplaceScriptTextCommand);
+      ReplaceScriptTextCommand.PropertyChanged += OnPropertyChanged;
+
       ExtractGameIdCommand = new AsyncRelayCommand(OnExtractGameIdExecute, OnCanExtractGameIdExecute);
       ExtractGameIdCommand.PropertyChanged += OnPropertyChanged;
 
       ShowRoomManagerCommand = new RelayCommand(OnShowRoomManagerExecute);
+    }
+
+    private struct DialogOptions
+    {
+      public string Title;
+      public string Filter;
+      public bool Multiselect;
+
+      public DialogOptions()
+      {
+        Title = string.Empty;
+        Filter = string.Empty;
+        Multiselect = false;
+      }
     }
   }
 }

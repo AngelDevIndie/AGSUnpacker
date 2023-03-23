@@ -41,11 +41,15 @@ namespace AGSUnpacker.Shared.Extensions
       return stringBuilder.ToString();
     }
 
+    // FIXME(adm244): this is NOT a CString, it's PrefixString32 !!!
     public static string ReadEncryptedCString(this BinaryReader reader)
     {
       Int32 length = reader.ReadInt32();
-      if ((length <= 0) || (length > AGSStringUtils.MaxCStringLength))
+      if ((length < 0) || (length > AGSStringUtils.MaxCStringLength))
         throw new IndexOutOfRangeException();
+
+      if (length == 0)
+        return string.Empty;
 
       //NOTE(adm244): ASCII ReadChars is not reliable in this case since it replaces bytes > 0x7F
       // https://referencesource.microsoft.com/#mscorlib/system/text/asciiencoding.cs,879
@@ -81,6 +85,16 @@ namespace AGSUnpacker.Shared.Extensions
       // the string can be null-terminated (when it's actual length is less the the length specified)
       // Should we consider using a different method for this case??
       return AGSStringUtils.ConvertCString(buffer);
+    }
+
+    public static string ReadPrefixedString8(this BinaryReader reader)
+    {
+      if (reader.EOF())
+        return string.Empty;
+
+      byte length = reader.ReadByte();
+      char[] buffer = reader.ReadChars(length);
+      return new string(buffer);
     }
 
     public static string ReadPrefixedString32(this BinaryReader reader)
