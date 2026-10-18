@@ -21,7 +21,7 @@ RM     ?= rm
 TARGET  ?= win
 ARCH    ?= x64
 CONFIG  ?= Debug
-VERSION ?= 0.8
+VERSION ?= 0.11
 AUTHORS ?= Unknown
 PUBLIC_RELEASE ?=
 
@@ -40,6 +40,7 @@ BUILD_OPTIONS += /p:Authors="$(AUTHORS)"
 ifneq ($(strip $(PUBLIC_RELEASE)),)
 BUILD_OPTIONS += /p:PublicReleaseVersion="$(PUBLIC_RELEASE)"
 endif
+BUILD_OPTIONS += /p:TargetOS="$(TARGET)"
 
 PROJECT_UI ?= AGSUnpacker.UI/AGSUnpacker.UI.csproj
 

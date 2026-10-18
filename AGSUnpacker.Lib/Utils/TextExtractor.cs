@@ -6,6 +6,7 @@ using System.Text;
 using AGSUnpacker.Lib.Game;
 using AGSUnpacker.Lib.Room;
 using AGSUnpacker.Lib.Translation;
+using AGSUnpacker.Shared.Utils;
 
 namespace AGSUnpacker.Lib.Utils
 {
@@ -139,6 +140,13 @@ namespace AGSUnpacker.Lib.Utils
       // embed game id and name
       lines.Add($"{AGSTranslation.TRS_TAG_GAMEID}{gameData.setup.unique_id}");
       lines.Add($"{AGSTranslation.TRS_TAG_GAMENAME}{gameData.setup.name}");
+
+      if (gameData.Version >= 3060000) { // 3.6.0
+        //FIXME(adm244): this assumes there's only two encodings
+        string encoding = gameData.setup.options[AGSGameData.EncodingOption] == 65001 ?
+          "UTF-8" : "ASCII";
+        lines.Add($"{AGSTranslation.TRS_TAG_ENCODING}{encoding}");
+      }
 
       // extract translation lines from game data
       lines.Add("// [game28.dta]");
@@ -306,6 +314,7 @@ namespace AGSUnpacker.Lib.Utils
       return true;
     }
 
+    // FIXME(adm244): generate AGSTranslation and use its reading\writting methods
     public static void WriteTranslationFile(string filename, List<string> lines)
     {
       string filepath = Path.Combine(Environment.CurrentDirectory, filename);
@@ -315,7 +324,7 @@ namespace AGSUnpacker.Lib.Utils
         {
           for (int i = 0; i < lines.Count; ++i)
           {
-            writer.WriteLine(lines[i]);
+            writer.WriteLine(AGSStringUtils.Escape(lines[i]));
             if (!lines[i].StartsWith("//"))
             {
               writer.WriteLine();

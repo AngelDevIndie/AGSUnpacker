@@ -18,6 +18,7 @@ namespace AGSUnpacker.UI.Views.Windows
   internal class RoomManagerWindowViewModel : ViewModel
   {
     private readonly WindowService _windowService;
+    private string LastSelectedFilepath = string.Empty;
 
     #region Properties
     private string _title;
@@ -87,14 +88,17 @@ namespace AGSUnpacker.UI.Views.Windows
       OpenFileDialog openDialog = new OpenFileDialog()
       {
         Title = "Select room file",
-        Filter = "AGS room file|*.crm",
+        Filter = "AGS room file (*.crm)|*.crm|All files|*.*",
         Multiselect = false,
         CheckFileExists = true,
-        CheckPathExists = true
+        CheckPathExists = true,
+        InitialDirectory = LastSelectedFilepath
       };
 
       if (openDialog.ShowDialog(_windowService.GetWindow(this)) != true)
         return;
+
+      LastSelectedFilepath = Path.GetDirectoryName(openDialog.FileName);
 
       Status = AppStatus.Loading;
 
@@ -120,15 +124,18 @@ namespace AGSUnpacker.UI.Views.Windows
       SaveFileDialog saveDialog = new SaveFileDialog()
       {
         Title = "Save room file",
-        Filter = "AGS room file|*.crm",
+        Filter = "AGS room file (*.crm)|*.crm|All files|*.*",
         CreatePrompt = false,
         OverwritePrompt = true,
         // FIXME(adm244): room filename stored in Title, really?
-        FileName = Title
+        FileName = Title,
+        InitialDirectory = LastSelectedFilepath
       };
 
       if (saveDialog.ShowDialog(_windowService.GetWindow(this)) != true)
         return;
+
+      LastSelectedFilepath = Path.GetDirectoryName(saveDialog.FileName);
 
       Status = AppStatus.Busy;
 
@@ -190,15 +197,18 @@ namespace AGSUnpacker.UI.Views.Windows
       SaveFileDialog saveDialog = new SaveFileDialog()
       {
         Title = "Save image",
-        Filter = "Image file|*.png;*.bmp",
+        Filter = "Image file (*.png;*.bmp)|*.png;*.bmp|All files|*.*",
         CreatePrompt = false,
         OverwritePrompt = true,
         // FIXME(adm244): room filename stored in Title, really?
-        FileName = Path.GetFileNameWithoutExtension(Title)
+        FileName = Path.GetFileNameWithoutExtension(Title),
+        InitialDirectory = LastSelectedFilepath
       };
 
       if (saveDialog.ShowDialog(_windowService.GetWindow(this)) != true)
         return Task.CompletedTask;
+
+      LastSelectedFilepath = Path.GetDirectoryName(saveDialog.FileName);
 
       return Task.Run(
         () =>
@@ -236,14 +246,17 @@ namespace AGSUnpacker.UI.Views.Windows
       OpenFileDialog openDialog = new OpenFileDialog()
       {
         Title = "Select image file",
-        Filter = "Image file|*.png;*.bmp",
+        Filter = "Image file (*.png;*.bmp)|*.png;*.bmp|All files|*.*",
         Multiselect = false,
         CheckFileExists = true,
-        CheckPathExists = true
+        CheckPathExists = true,
+        InitialDirectory = LastSelectedFilepath
       };
 
       if (openDialog.ShowDialog(_windowService.GetWindow(this)) != true)
         return;
+
+      LastSelectedFilepath = Path.GetDirectoryName(openDialog.FileName);
 
       Graphics.Bitmap image = await Task.Run(
         () => new Graphics.Bitmap(openDialog.FileName)
@@ -306,9 +319,10 @@ namespace AGSUnpacker.UI.Views.Windows
       SaveImageCommand.NotifyCanExecuteChanged();
     }
 
-    public RoomManagerWindowViewModel(WindowService windowService)
+    public RoomManagerWindowViewModel(WindowService windowService, string lastSelectedFilepath)
     {
       _windowService = windowService;
+      LastSelectedFilepath = lastSelectedFilepath;
 
       Room = null;
       Title = null;
@@ -319,10 +333,10 @@ namespace AGSUnpacker.UI.Views.Windows
       CloseRoomCommand = new RelayCommand(OnCloseRoomExecute, OnCanCloseRoomExecute);
       QuitCommand = new RelayCommand(OnQuitExecute);
 
-      SaveImageCommand = new AsyncRelayCommand(OnSaveImageExecute, OnCanSaveImageExecute);
+      SaveImageCommand = new AsyncRelayCommand(OnSaveImageExecute, OnCanSaveImageExecute, AsyncRelayCommandOptions.FlowExceptionsToTaskScheduler);
       SaveImageCommand.PropertyChanged += OnPropertyChanged;
 
-      ReplaceImageCommand = new AsyncRelayCommand(OnReplaceImageExecute, OnCanReplaceImageExecute);
+      ReplaceImageCommand = new AsyncRelayCommand(OnReplaceImageExecute, OnCanReplaceImageExecute, AsyncRelayCommandOptions.FlowExceptionsToTaskScheduler);
       ReplaceImageCommand.PropertyChanged += OnReplaceImagePropertyChanged;
     }
   }

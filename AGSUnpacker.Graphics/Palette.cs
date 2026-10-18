@@ -26,7 +26,10 @@ namespace AGSUnpacker.Graphics
     public int Length => Entries.Length;
     public bool Empty => Entries.Length == 0;
 
-    public Color this[int index] => Entries[index];
+    public Color this[int index] {
+      get => Entries[index];
+      set => Entries[index] = value;
+    }
 
     public byte[] ToBuffer()
     {

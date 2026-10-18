@@ -58,7 +58,8 @@ namespace AGSUnpacker.Lib.Assets
     {
       for (int i = 0; i < Archives.Length; ++i)
       {
-        string archiveOutputFolder = Path.Combine(outputFolder, Archives[i].Filename);
+        string archiveFileName = Path.GetFileName(Archives[i].Filename);
+        string archiveOutputFolder = Path.Combine(outputFolder, archiveFileName);
         Directory.CreateDirectory(archiveOutputFolder);
 
         ExtractFilesFromArchive(Archives[i], archiveOutputFolder);
@@ -134,7 +135,7 @@ namespace AGSUnpacker.Lib.Assets
               return false;
           }
 
-          Archives = ReadCLib(reader);
+          Archives = ReadCLib(reader, offset);
 
           //HACK(adm244): quick 'n dirty appended clib support
           // assumes that the first entry is the appended clib
@@ -145,7 +146,7 @@ namespace AGSUnpacker.Lib.Assets
       return (Archives != null);
     }
 
-    private CLibArchive[] ReadCLib(BinaryReader reader)
+    private CLibArchive[] ReadCLib(BinaryReader reader, long offset)
     {
       CLibArchive[] files = new CLibArchive[0];
 
@@ -172,7 +173,7 @@ namespace AGSUnpacker.Lib.Assets
           files = ReadCLibPre21(reader, version);
       }
       else
-        files = ReadCLibPre10(reader, version);
+        files = ReadCLibPre10(reader, version, offset);
 
       return files;
     }
@@ -216,7 +217,7 @@ namespace AGSUnpacker.Lib.Assets
 
       //NOTE(adm244): assuming asset files are stored sequentially
       Int32 filesCount = encoder.ReadInt32(reader);
-      
+
       CLibArchive[] files = new CLibArchive[filesCount];
       for (int i = 0; i < files.Length; ++i)
         files[i] = new CLibArchive();
@@ -325,7 +326,7 @@ namespace AGSUnpacker.Lib.Assets
       return BuildAssetsLists(assets, ref files);
     }
 
-    private CLibArchive[] ReadCLibPre10(BinaryReader reader, int version)
+    private CLibArchive[] ReadCLibPre10(BinaryReader reader, int version, long offset)
     {
       CLibArchive[] files = new CLibArchive[1];
       files[0] = new CLibArchive();
@@ -354,7 +355,8 @@ namespace AGSUnpacker.Lib.Assets
       //TODO(adm244): read "flags and ratio", skipping for now
       reader.BaseStream.Seek(assetsCount * sizeof(Int16), SeekOrigin.Current);
 
-      assets[0].Offset = reader.BaseStream.Position;
+      // NOTE(adm244): asset manager expects offsets relative to clib start
+      assets[0].Offset = reader.BaseStream.Position - offset;
       for (int i = 1; i < assets.Length; ++i)
         assets[i].Offset = assets[i - 1].Offset + assets[i - 1].Size;
 

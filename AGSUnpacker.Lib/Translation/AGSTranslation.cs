@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -6,10 +6,10 @@ using System.Text;
 
 using AGSUnpacker.Lib.Shared.FormatExtensions;
 using AGSUnpacker.Shared.Extensions;
+using AGSUnpacker.Shared.Utils;
 
 namespace AGSUnpacker.Lib.Translation
 {
-  // FIXME(adm244): "encoding" field is missing from trs file produced by "create trs from assets"
   // TODO(adm244): what if source language is not the language you want to make a translation from?
   // for example, game default language is german and there's an english.tra file, you want to translate
   // from english into your language, but the trs file must contain the original lines...
@@ -22,43 +22,56 @@ namespace AGSUnpacker.Lib.Translation
     public const string TRS_TAG_GAMENAME = "//#GameName=";
     public const string TRS_TAG_ENCODING = "//#Encoding=";
 
+    public const string TRS_TAG_NORMAL_FONT = "//#NormalFont=";
+    public const string TRS_TAG_SPEECH_FONT = "//#SpeechFont=";
+    public const string TRS_TAG_TEXT_DIRECTION = "//#TextDirection=";
+
+    private const string TRS_TAG_DEFAULT = "DEFAULT";
+    private const string TRS_TAG_TEXT_DIRECTION_LEFT = "LEFT";
+    private const string TRS_TAG_TEXT_DIRECTION_RIGHT = "RIGHT";
+
+    //TODO(adm244): check if there's other options added by newer engine versions
+    private const string EncodingOption = "encoding";
+    private const string EncodingOptionDefault = "ASCII";
+
     // FIXME(adm244): temporary? public
-    public List<string> OriginalLines { get; set; }
-    public List<string> TranslatedLines { get; set; }
+    public Dictionary<string, string> Lines { get; private set; }
 
     public int GameID { get; private set; }
     public string GameName { get; private set; }
+    public int NormalFont { get; private set; }
+    public int SpeechFont { get; private set; }
+    public int TextDirection { get; private set; }
 
     public Dictionary<string, string> Options;
-    
+
+    public bool HasTextEncoding => Options.ContainsKey(EncodingOption);
+
     public string TextEncoding
     {
       get
       {
-        if (Options.ContainsKey("encoding"))
-          return Options["encoding"];
+        // NOTE(adm244): some TRA files contain empty encoding field
+        if (HasTextEncoding && !string.IsNullOrWhiteSpace(Options[EncodingOption]))
+          return Options[EncodingOption];
 
-        return "ASCII";
+        return EncodingOptionDefault;
       }
 
-      set => Options["encoding"] = value;
+      set => Options[EncodingOption] = value;
     }
 
     public AGSTranslation()
     {
-      OriginalLines = new List<string>();
-      TranslatedLines = new List<string>();
+      Lines = new();
 
       GameID = 0;
       GameName = string.Empty;
+      NormalFont = -1;
+      SpeechFont = -1;
+      TextDirection = -1;
 
       Options = new Dictionary<string, string>();
-    }
-
-    public AGSTranslation(IEnumerable<string> originalLines, IEnumerable<string> translatedLines)
-    {
-      OriginalLines.AddRange(originalLines);
-      TranslatedLines.AddRange(translatedLines);
     }
 
     public bool Add(string original, string translation)
@@ -66,10 +79,8 @@ namespace AGSUnpacker.Lib.Translation
       if (string.IsNullOrEmpty(original) || string.IsNullOrEmpty(translation))
         return false;
 
-      OriginalLines.Add(original);
-      TranslatedLines.Add(translation);
-
-      return true;
+      // NOTE(adm244); some TRA files contain duplicates, ignore it here
+      return Lines.TryAdd(original, translation);
     }
 
     public void Compile(string filepath)
@@ -79,10 +90,18 @@ namespace AGSUnpacker.Lib.Translation
 
     public void Compile(string filepath, int gameID, string gameName)
     {
-      if (OriginalLines.Count != TranslatedLines.Count)
+      if (GameID == 0)
       {
-        Trace.Assert(false, "AGSTranslation::Compile: Original and Tranlated lines count do not match!");
-        return;
+        throw new InvalidDataException(
+          "Invalid GameID. Possibly missing \"//#GameID=\" field in trs file."
+        );
+      }
+
+      if (string.IsNullOrEmpty(GameName))
+      {
+        throw new InvalidDataException(
+          "Empty GameName. Possibly missing \"//#GameName=\" field in trs file."
+        );
       }
 
       GameID = gameID;
@@ -96,9 +115,7 @@ namespace AGSUnpacker.Lib.Translation
 
           WriteBlock(writer, BlockType.Header);
           WriteBlock(writer, BlockType.Content);
-
-          //TODO(adm244): implement settings block
-          //WriteBlock(writer, BlockType.Settings);
+          WriteBlock(writer, BlockType.Settings);
 
           if (Options.Count > 0)
             ExtensionBlock.WriteSingle(writer, "ext_sopts", WriteExtensionBlock,
@@ -122,28 +139,33 @@ namespace AGSUnpacker.Lib.Translation
           {
             writer.Write((UInt32)GameID);
             writer.WriteEncryptedCString(GameName);
-          } break;
+          }
+          break;
 
         case BlockType.Content:
           {
-            for (int i = 0; i < OriginalLines.Count; ++i)
+            foreach (var (original, translated) in Lines)
             {
               //NOTE(adm244): skip lines that have no translation
-              if (string.IsNullOrEmpty(TranslatedLines[i]))
+              if (string.IsNullOrEmpty(translated))
                 continue;
 
-              writer.WriteEncryptedCString(OriginalLines[i]);
-              writer.WriteEncryptedCString(TranslatedLines[i]);
+              writer.WriteEncryptedCString(original);
+              writer.WriteEncryptedCString(translated);
             }
 
             //NOTE(adm244): write empty strings so parser knows this block has ended;
             // no idea why they just don't use a block size value...
             writer.WriteEncryptedCString("");
             writer.WriteEncryptedCString("");
-          } break;
+          }
+          break;
 
         case BlockType.Settings:
-          throw new NotImplementedException("AGSTranslation: Setting block is not implemented!");
+          writer.Write((Int32)NormalFont);
+          writer.Write((Int32)SpeechFont);
+          writer.Write((Int32)TextDirection);
+          break;
 
         case BlockType.End:
           // do nothing
@@ -273,19 +295,18 @@ namespace AGSUnpacker.Lib.Translation
       switch (type)
       {
         case BlockType.Content:
-        {
-          for (; ; )
           {
-            string original = reader.ReadEncryptedCString();
-            string translation = reader.ReadEncryptedCString();
+            for (; ; )
+            {
+              string original = reader.ReadEncryptedCString();
+              string translation = reader.ReadEncryptedCString();
 
-            if ((original.Length < 1) && (translation.Length < 1))
-              return true;
+              if ((original.Length < 1) && (translation.Length < 1))
+                return true;
 
-            OriginalLines.Add(original);
-            TranslatedLines.Add(translation);
+              Add(original, translation);
+            }
           }
-        }
 
         case BlockType.Header:
           GameID = reader.ReadInt32();
@@ -294,7 +315,9 @@ namespace AGSUnpacker.Lib.Translation
           return true;
 
         case BlockType.Settings:
-          //TODO(adm244): implement settings block
+          NormalFont = reader.ReadInt32();
+          SpeechFont = reader.ReadInt32();
+          TextDirection = reader.ReadInt32();
           return false;
 
         default:
@@ -303,61 +326,85 @@ namespace AGSUnpacker.Lib.Translation
       }
     }
 
+    //FIXME(adm244): read\write naming is really dumb
+    private static int ReadOptionalInt(string str)
+    {
+      if (str == TRS_TAG_DEFAULT)
+        return -1;
+
+      if (int.TryParse(str, out int value))
+        return value;
+      return -1;
+    }
+
+    private static string WriteOptionalInt(int value)
+    {
+      if (value == -1)
+        return TRS_TAG_DEFAULT;
+      return string.Format($"{value}");
+    }
+
+    private static int ReadOptionalTextDirection(string directionText) => directionText switch
+    {
+      TRS_TAG_TEXT_DIRECTION_LEFT => (int)TextDirections.Left,
+      TRS_TAG_TEXT_DIRECTION_RIGHT => (int)TextDirections.Right,
+      _ => (int)TextDirections.Default
+    };
+
+    private static string WriteOptionalTextDirection(int direction) => direction switch
+    {
+      (int)TextDirections.Left => TRS_TAG_TEXT_DIRECTION_LEFT,
+      (int)TextDirections.Right => TRS_TAG_TEXT_DIRECTION_RIGHT,
+      _ => TRS_TAG_DEFAULT
+    };
+
     public static AGSTranslation ReadSourceFile(string filename)
     {
       AGSTranslation translation = new AGSTranslation();
 
-      using (FileStream stream = new FileStream(filename, FileMode.Open, FileAccess.Read))
+      using FileStream stream = new FileStream(filename, FileMode.Open, FileAccess.Read);
+      using StreamReader reader = new StreamReader(stream, Encoding.Latin1);
+
+      while (!reader.EndOfStream)
       {
-        using (StreamReader reader = new StreamReader(stream, Encoding.Latin1))
+        string first = reader.ReadLine();
+        if (first == null) break;
+
+        if (first.StartsWith("//"))
         {
-          ReadState state = ReadState.Original;
-
-          while (!reader.EndOfStream)
+          if (first.StartsWith(TRS_TAG_GAMEID))
           {
-            string line = reader.ReadLine();
-            if (line.StartsWith("//"))
-            {
-              if (line.StartsWith(TRS_TAG_GAMEID))
-              {
-                string gameIDString = line.Substring(TRS_TAG_GAMEID.Length);
-                translation.GameID = int.Parse(gameIDString);
-              }
-              else if (line.StartsWith(TRS_TAG_GAMENAME))
-              {
-                translation.GameName = line.Substring(TRS_TAG_GAMENAME.Length);
-              }
-              else if (line.StartsWith(TRS_TAG_ENCODING))
-              {
-                translation.TextEncoding = line.Substring(TRS_TAG_ENCODING.Length);
-              }
-
-              continue;
-            }
-
-            //TODO(adm244): read settings
-
-            switch (state)
-            {
-              case ReadState.Original:
-                {
-                  translation.OriginalLines.Add(line);
-                  state = ReadState.Translation;
-                }
-                break;
-
-              case ReadState.Translation:
-                {
-                  translation.TranslatedLines.Add(line);
-                  state = ReadState.Original;
-                }
-                break;
-
-              default:
-                throw new InvalidDataException();
-            }
+            string gameIDString = first.Substring(TRS_TAG_GAMEID.Length);
+            translation.GameID = int.Parse(gameIDString);
           }
+          else if (first.StartsWith(TRS_TAG_GAMENAME))
+          {
+            translation.GameName = first.Substring(TRS_TAG_GAMENAME.Length);
+          }
+          else if (first.StartsWith(TRS_TAG_NORMAL_FONT))
+          {
+            translation.NormalFont = ReadOptionalInt(first.Substring(TRS_TAG_NORMAL_FONT.Length));
+          }
+          else if (first.StartsWith(TRS_TAG_SPEECH_FONT))
+          {
+            translation.SpeechFont = ReadOptionalInt(first.Substring(TRS_TAG_SPEECH_FONT.Length));
+          }
+          else if (first.StartsWith(TRS_TAG_TEXT_DIRECTION))
+          {
+            translation.TextDirection = ReadOptionalTextDirection(first.Substring(TRS_TAG_TEXT_DIRECTION.Length));
+          }
+          else if (first.StartsWith(TRS_TAG_ENCODING))
+          {
+            translation.TextEncoding = first.Substring(TRS_TAG_ENCODING.Length);
+          }
+
+          continue;
         }
+
+        string second = reader.ReadLine();
+        if (second == null) break;
+
+        translation.Add(AGSStringUtils.Unescape(first), AGSStringUtils.Unescape(second));
       }
 
       return translation;
@@ -365,24 +412,27 @@ namespace AGSUnpacker.Lib.Translation
 
     public void WriteSourceFile(string filepath)
     {
-      using (FileStream stream = new FileStream(filepath, FileMode.Create, FileAccess.Write))
+      using FileStream stream = new(filepath, FileMode.Create, FileAccess.Write);
+      using StreamWriter writer = new(stream, Encoding.Latin1);
+
+      // TODO(adm244): assert GameID and GameName are valid
+
+      writer.WriteLine("{0}{1}", TRS_TAG_GAMEID, GameID);
+      writer.WriteLine("{0}{1}", TRS_TAG_GAMENAME, GameName);
+      writer.WriteLine("{0}{1}", TRS_TAG_NORMAL_FONT, WriteOptionalInt(NormalFont));
+      writer.WriteLine("{0}{1}", TRS_TAG_SPEECH_FONT, WriteOptionalInt(SpeechFont));
+      writer.WriteLine("{0}{1}", TRS_TAG_TEXT_DIRECTION, WriteOptionalTextDirection(TextDirection));
+
+      //NOTE(adm244): don't output any encoding setting if corresponding option's not set
+      if (HasTextEncoding)
+        writer.WriteLine("{0}{1}", TRS_TAG_ENCODING, TextEncoding);
+
+      foreach (var (original, translated) in Lines)
       {
-        using (StreamWriter writer = new StreamWriter(stream, Encoding.Latin1))
-        {
-          Debug.Assert(OriginalLines.Count == TranslatedLines.Count);
-
-          // TODO(adm244): assert GameID and GameName are valid
-
-          writer.WriteLine("{0}{1}", TRS_TAG_GAMEID, GameID);
-          writer.WriteLine("{0}{1}", TRS_TAG_GAMENAME, GameName);
-          writer.WriteLine("{0}{1}", TRS_TAG_ENCODING, TextEncoding);
-
-          for (int i = 0; i < OriginalLines.Count; ++i)
-          {
-            writer.WriteLine(OriginalLines[i]);
-            writer.WriteLine(TranslatedLines[i]);
-          }
-        }
+        // NOTE(adm244): 3.6.1 added support for C-like escape sequences;
+        //  we must property substitute them before\after writing
+        writer.WriteLine(AGSStringUtils.Escape(original));
+        writer.WriteLine(AGSStringUtils.Escape(translated));
       }
     }
 
@@ -394,11 +444,11 @@ namespace AGSUnpacker.Lib.Translation
       Settings = 3,
     }
 
-    private enum ReadState
+    private enum TextDirections
     {
-      Invalid = 0,
-      Original,
-      Translation,
+      Default = -1,
+      Left = 1,
+      Right = 2,
     }
   }
 }

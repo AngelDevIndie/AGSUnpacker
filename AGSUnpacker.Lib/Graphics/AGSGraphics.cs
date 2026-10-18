@@ -10,6 +10,27 @@ namespace AGSUnpacker.Lib.Graphics
 {
   public static class AGSGraphics
   {
+    public const int LockedColorsCount = 17;
+
+    private static bool AreLockedColorsEmpty(Palette palette)
+    {
+      for (int i = 0; i < LockedColorsCount; ++i)
+      {
+        if (!palette[i].IsBlack())
+          return false;
+      }
+
+      return true;
+    }
+
+    private static void RestoreLockedColors(Palette palette)
+    {
+      for (int i = 0; i < LockedColorsCount; ++i)
+      {
+        palette[i] = AGSSpriteSet.DefaultPalette[i];
+      }
+    }
+
     // NOTE(adm244): assumes there's at least one bright color in a palette
     private static PixelFormat GetPaletteFormat(byte[] buffer)
     {
@@ -122,11 +143,16 @@ namespace AGSUnpacker.Lib.Graphics
 
       Palette palette = Palette.FromBuffer(bufferPalette, paletteFormat);
 
+      // NOTE(adm244): some room backgrounds have a separate palette, but may
+      //  reference LOCKED game-wide palette colors. Restore these colors if needed.
+      if (AreLockedColorsEmpty(palette))
+        RestoreLockedColors(palette);
+
       if (format == PixelFormat.Indexed)
         return new Bitmap(width, height, bufferPixels, format, palette);
 
       Bitmap bitmap = new Bitmap(width, height, bufferPixels, format);
-      
+
       // NOTE(adm244): removes null-alpha; see AGSGraphics.ReadSprite
       if (bitmap.Format == PixelFormat.Argb32)
         bitmap = bitmap.Convert(PixelFormat.Rgb24);

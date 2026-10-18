@@ -1,3 +1,69 @@
+v011:
+
+UI:
+- Fixed initial directory for multiple open dialogs
+- Added AGT extension to assets file dialog filter
+- Added ability to select multiple TRA files
+
+Graphics:
+- Fixed missing room background palette colors
+
+Assets:
+- Fixed archive file name parsing
+- Fixed incorrect offsets reading appended CLIB v6 (old games)
+
+Translation:
+- Fixed TRA parsing with empty encoding
+- Ignore duplicated entries in TRA file
+
+Script:
+- Added script module list extraction
+
+
+v010:
+
+General:
+- Resolved compiler warnings
+
+UI:
+- Fixed error messages not being shown
+- Improved open file dialog filters
+- Fixed file dialogs not remembering last selected folder
+- Added keyboard shortcuts support for Room Manager
+
+Game:
+- Added support for "v362_interevents" extension block
+- Added support for "v362_interevent2" extension block
+- Added support for "v362_guictrls" extension block
+- Added support for "v363_gameinfo" extension block
+- Added support for "v363_dialogsnew" extension block
+- Added support for "v363_guicrls" extension block
+
+Translation:
+- Fixed parsing misaligned TRS files
+- Added support for C-style escape sequences in TRS files
+
+
+v09:
+
+Script:
+- Added support for multiple scripts injection into dta file
+- Fixed built-in scripts being overwritten by user ones
+
+Game:
+- Added support for "v361_objnames" extension block
+- Fixed crash when unknown extension block is encountered
+
+Graphics:
+- Added support for deflate\zlib compression option
+- Optimized sprites packaging memory consumption (to some extent)
+
+Translation:
+- Added support for "Settings" block (fixes crashes)
+- Added checks for missing "GameID", "GameName" fields
+- Fixed support for "Encoding" field
+
+
 v08:
 
 General:

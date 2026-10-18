@@ -30,6 +30,14 @@ namespace AGSUnpacker.Graphics
       return (A << 24) | (B << 16) | (G << 8) | R;
     }
 
+    public bool IsBlack()
+    {
+      if (R != 0) return false;
+      if (G != 0) return false;
+      if (B != 0) return false;
+      return true;
+    }
+
     public static Color FromRgba32(int rgba32)
     {
       byte red   = (byte)((rgba32 >>  0) & 0xFF);

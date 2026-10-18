@@ -80,6 +80,9 @@
 
     public static string DecryptSalt(string textEncrypted, int salt)
     {
+      if (salt == 0)
+        return textEncrypted;
+
       byte[] bufferDecrypted = new byte[textEncrypted.Length];
 
       for (int i = 0; i < bufferDecrypted.Length; ++i)

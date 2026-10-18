@@ -22,6 +22,7 @@ namespace AGSUnpacker.UI.Views.Windows
   internal class MainWindowViewModel : ViewModel
   {
     private readonly WindowService _windowService;
+    private string LastSelectedFilepath = string.Empty;
 
     #region Properties
     public static string ProgramName => AppDescription.ProgramName;
@@ -63,7 +64,7 @@ namespace AGSUnpacker.UI.Views.Windows
     {
       try
       {
-        await UnpackAsync("Select AGS game archive", "AGS archive|*.ags;*.exe",
+        await UnpackAsync("Select AGS game archive", "AGS archive (*.ags;*.exe;*.001;*.vox;*.agt)|*.ags;*.exe;*.001;*.vox;*.agt|All files|*.*",
         (filepath, targetFolder) =>
         {
           AssetsManager assetsManager = AssetsManager.Create(filepath);
@@ -102,7 +103,7 @@ namespace AGSUnpacker.UI.Views.Windows
     {
       try
       {
-        await UnpackAsync("Select acsprset.spr file", "AGS sprite set|*.spr",
+        await UnpackAsync("Select acsprset.spr file", "AGS sprites file (*.spr)|*.spr|All files|*.*",
           (filepath, targetFolder) => AGSSpriteSet.UnpackSprites(filepath, targetFolder)
         );
       }
@@ -152,7 +153,7 @@ namespace AGSUnpacker.UI.Views.Windows
 
     private Task OnRepackSpritesExecute()
     {
-      return RepackAsync("Select header.bin file", "Sprite set header|header.bin",
+      return RepackAsync("Select header.bin file", "Sprite set header (header.bin)|header.bin",
         (filepath, targetFolder) =>
         {
           string inputFolder = Path.GetDirectoryName(filepath);
@@ -177,7 +178,7 @@ namespace AGSUnpacker.UI.Views.Windows
 
     private Task OnExtractTranslationExecute()
     {
-      return ExtractAsync("Select AGS game executable", "AGS game executable|*.exe",
+      return ExtractAsync("Select AGS archive", "AGS archive (*.ags;*.exe;*.001)|*.ags;*.exe;*.001|All files|*.*",
         (filepath, targetFolder) =>
         {
           string targetFilepath = Path.Combine(targetFolder, "Extracted.trs");
@@ -202,14 +203,24 @@ namespace AGSUnpacker.UI.Views.Windows
 
     private Task OnDecompileTranslationExecute()
     {
-      return SelectFileAsync("Select TRA file", "AGS compiled translation|*.tra",
-        (filepath) =>
+      return SelectFilesAsync(
+        (filenames) =>
         {
-          string targetFilepath = Path.ChangeExtension(filepath, "trs");
-          AGSTranslation translation = new AGSTranslation();
+          foreach (string filename in filenames)
+          {
+            string targetFilepath = Path.ChangeExtension(filename, "trs");
+            AGSTranslation translation = new AGSTranslation();
 
-          translation.Decompile(filepath);
-          translation.WriteSourceFile(targetFilepath);
+            translation.Decompile(filename);
+            translation.WriteSourceFile(targetFilepath);
+          }
+        },
+        new DialogOptions
+        {
+          Title = "Select TRA files",
+          Filter = "AGS compiled translation (*.tra)|*.tra|All files|*.*",
+          Multiselect = true,
+          InitialDirectory = LastSelectedFilepath
         }
       );
     }
@@ -230,7 +241,7 @@ namespace AGSUnpacker.UI.Views.Windows
 
     private Task OnCompileTraslationExecute()
     {
-      return SelectFileAsync("Select TRS file", "AGS translation|*.trs",
+      return SelectFileAsync("Select TRS file", "AGS source translation (*.trs)|*.trs|All files|*.*",
         (filepath) =>
         {
           string targetFilepath = Path.ChangeExtension(filepath, "tra");
@@ -256,7 +267,7 @@ namespace AGSUnpacker.UI.Views.Windows
 
     private Task OnExtractGameIdExecute()
     {
-      return ExtractAsync("Select AGS game executable", "AGS game executable|*.exe",
+      return ExtractAsync("Select AGS archive", "AGS archive (*.ags;*.exe;*.001)|*.ags;*.exe;*.001|All files|*.*",
         (filepath, targetFolder) =>
         {
           string targetFilepath = Path.Combine(targetFolder, "game_id.txt");
@@ -281,7 +292,33 @@ namespace AGSUnpacker.UI.Views.Windows
 
     private void OnShowRoomManagerExecute()
     {
-      _windowService.Show(new RoomManagerWindowViewModel(_windowService));
+      _windowService.Show(new RoomManagerWindowViewModel(_windowService, LastSelectedFilepath));
+    }
+    #endregion
+
+    #region GenerateModulesListCommand
+    private IAsyncRelayCommand _generateModulesListCommand;
+    public IAsyncRelayCommand GenerateModulesListCommand
+    {
+      get => _generateModulesListCommand;
+      set => SetProperty(ref _generateModulesListCommand, value);
+    }
+
+    private Task OnGenerateModulesListExecute()
+    {
+      return SelectFileAsync("Select game data file", "Game data (*.dta)|*.dta|All files|*.*",
+        (filepath) =>
+        {
+          string targetFolder = Path.GetDirectoryName(filepath);
+          string targetFilepath = Path.Combine(targetFolder, "ScriptModules.lst");
+          ScriptManager.ExtractModulesList(filepath, targetFilepath);
+        }
+      );
+    }
+
+    private bool OnCanGenerateModulesList()
+    {
+      return !GenerateModulesListCommand.IsRunning;
     }
     #endregion
 
@@ -295,7 +332,7 @@ namespace AGSUnpacker.UI.Views.Windows
 
     private Task OnExtractScriptsExecute()
     {
-      return ExtractAsync("Select AGS game executable", "AGS game executable|*.exe",
+      return ExtractAsync("Select AGS archive", "AGS archive (*.ags;*.exe;*.001)|*.ags;*.exe;*.001|All files|*.*",
         (filepath, sourceFolder) =>
         {
           string targetFolder = Path.Combine(sourceFolder, "Scripts");
@@ -323,17 +360,20 @@ namespace AGSUnpacker.UI.Views.Windows
       return SelectFilesAsync(
         (filenames) =>
         {
-          ScriptManager.Inject(filenames[0], filenames[1]);
+          ScriptManager.Inject(filenames[0], filenames.AsSpan(1).ToArray());
         },
         new DialogOptions
         {
           Title = "Select asset file to inject into",
-          Filter = "Game data or room file|*.dta;*.crm"
+          Filter = "Game data or room file (*.dta,*.crm)|*.dta;*.crm|All files|*.*",
+          InitialDirectory = LastSelectedFilepath
         },
         new DialogOptions
         {
-          Title = "Select script object file to inject",
-          Filter = "SCOM3 script file|*." + ScriptManager.ScriptFileExtension
+          Title = "Select one or more script files",
+          Filter = "SCOM3 script file (*." + ScriptManager.ScriptFileExtension + ")|*."
+                    + ScriptManager.ScriptFileExtension + "|All files|*.*",
+          Multiselect = true
         }
       );
     }
@@ -362,12 +402,14 @@ namespace AGSUnpacker.UI.Views.Windows
         new DialogOptions
         {
           Title = "Select trs file to get replacements from",
-          Filter = "Translation source file|*.trs"
+          Filter = "Translation source file (*.trs)|*.trs|All files|*.*",
+          InitialDirectory = LastSelectedFilepath
         },
         new DialogOptions
         {
           Title = "Select one or more script files",
-          Filter = "SCOM3 script file|*." + ScriptManager.ScriptFileExtension,
+          Filter = "SCOM3 script file(*." + ScriptManager.ScriptFileExtension + ")|*."
+                    + ScriptManager.ScriptFileExtension + "|All files|*.*",
           Multiselect = true
         }
       );
@@ -389,11 +431,14 @@ namespace AGSUnpacker.UI.Views.Windows
         Filter = filter,
         Multiselect = false,
         CheckFileExists = true,
-        CheckPathExists = true
+        CheckPathExists = true,
+        InitialDirectory = LastSelectedFilepath
       };
 
       if (openDialog.ShowDialog(_windowService.GetWindow(this)) != true)
         return Task.CompletedTask;
+
+      LastSelectedFilepath = Path.GetDirectoryName(openDialog.FileName);
 
       return Task.Run(
         () => action(openDialog.FileName)
@@ -407,14 +452,18 @@ namespace AGSUnpacker.UI.Views.Windows
       OpenFileDialog openDialog = new OpenFileDialog();
       for (int i = 0; i < options.Length; ++i)
       {
+        openDialog.Reset();
         openDialog.Title = options[i].Title;
         openDialog.Filter = options[i].Filter;
         openDialog.Multiselect = options[i].Multiselect;
         openDialog.CheckFileExists = true;
         openDialog.CheckPathExists = true;
+        openDialog.InitialDirectory = options[i].InitialDirectory ?? LastSelectedFilepath;
 
         if (openDialog.ShowDialog(_windowService.GetWindow(this)) != true)
           return Task.CompletedTask;
+
+        LastSelectedFilepath = Path.GetDirectoryName(openDialog.FileName);
 
         filenames.AddRange(openDialog.FileNames);
       }
@@ -432,7 +481,10 @@ namespace AGSUnpacker.UI.Views.Windows
         Filter = filter,
         Multiselect = false,
         CheckFileExists = true,
-        CheckPathExists = true
+        CheckPathExists = true,
+        // NOTE(adm244): not implemented in WPF
+        // RestoreDirectory = true
+        InitialDirectory = LastSelectedFilepath
       };
 
       if (openDialog.ShowDialog(_windowService.GetWindow(this)) != true)
@@ -442,6 +494,8 @@ namespace AGSUnpacker.UI.Views.Windows
       string filename = Path.GetFileNameWithoutExtension(openDialog.SafeFileName);
       string folder = Path.GetDirectoryName(openDialog.FileName);
       string targetFolder = Path.Combine(folder, filename);
+
+      LastSelectedFilepath = folder;
 
       if (!Directory.Exists(targetFolder))
         Directory.CreateDirectory(targetFolder);
@@ -459,7 +513,8 @@ namespace AGSUnpacker.UI.Views.Windows
         Filter = filter,
         Multiselect = false,
         CheckFileExists = true,
-        CheckPathExists = true
+        CheckPathExists = true,
+        InitialDirectory = LastSelectedFilepath
       };
 
       if (openDialog.ShowDialog(_windowService.GetWindow(this)) != true)
@@ -468,6 +523,8 @@ namespace AGSUnpacker.UI.Views.Windows
       string filepath = openDialog.FileName;
       string folder = Path.GetDirectoryName(openDialog.FileName);
       string targetFolder = Path.Combine(folder, "packed");
+
+      LastSelectedFilepath = folder;
 
       if (!Directory.Exists(targetFolder))
         Directory.CreateDirectory(targetFolder);
@@ -485,7 +542,8 @@ namespace AGSUnpacker.UI.Views.Windows
         Filter = filter,
         Multiselect = false,
         CheckFileExists = true,
-        CheckPathExists = true
+        CheckPathExists = true,
+        InitialDirectory = LastSelectedFilepath
       };
 
       if (openDialog.ShowDialog(App.Current.MainWindow) != true)
@@ -495,6 +553,8 @@ namespace AGSUnpacker.UI.Views.Windows
       string filename = Path.GetFileNameWithoutExtension(openDialog.SafeFileName);
       string folder = Path.GetDirectoryName(openDialog.FileName);
       string targetFolder = Path.Combine(folder, filename);
+
+      LastSelectedFilepath = folder;
 
       if (!Directory.Exists(targetFolder))
       {
@@ -563,38 +623,41 @@ namespace AGSUnpacker.UI.Views.Windows
 
       // TODO(adm244): automate this
 
-      UnpackAssetsCommand = new AsyncRelayCommand(OnUnpackAssetsExecute, OnCanUnpackAssetsExecute);
+      UnpackAssetsCommand = new AsyncRelayCommand(OnUnpackAssetsExecute, OnCanUnpackAssetsExecute, AsyncRelayCommandOptions.FlowExceptionsToTaskScheduler);
       UnpackAssetsCommand.PropertyChanged += OnPropertyChanged;
 
-      UnpackSpritesCommand = new AsyncRelayCommand(OnUnpackSpritesExecute, OnCanUnpackSpritesExecute);
+      UnpackSpritesCommand = new AsyncRelayCommand(OnUnpackSpritesExecute, OnCanUnpackSpritesExecute, AsyncRelayCommandOptions.FlowExceptionsToTaskScheduler);
       UnpackSpritesCommand.PropertyChanged += OnPropertyChanged;
 
-      RepackAssetsCommand = new AsyncRelayCommand(OnRepackAssetsExecute, OnCanRepackAssetsExecute);
+      RepackAssetsCommand = new AsyncRelayCommand(OnRepackAssetsExecute, OnCanRepackAssetsExecute, AsyncRelayCommandOptions.FlowExceptionsToTaskScheduler);
       RepackAssetsCommand.PropertyChanged += OnPropertyChanged;
 
-      RepackSpritesCommand = new AsyncRelayCommand(OnRepackSpritesExecute, OnCanRepackSpritesExecute);
+      RepackSpritesCommand = new AsyncRelayCommand(OnRepackSpritesExecute, OnCanRepackSpritesExecute, AsyncRelayCommandOptions.FlowExceptionsToTaskScheduler);
       RepackSpritesCommand.PropertyChanged += OnPropertyChanged;
 
-      ExtractTranslationCommand = new AsyncRelayCommand(OnExtractTranslationExecute, OnCanExtractTranslationExecute);
+      ExtractTranslationCommand = new AsyncRelayCommand(OnExtractTranslationExecute, OnCanExtractTranslationExecute, AsyncRelayCommandOptions.FlowExceptionsToTaskScheduler);
       ExtractTranslationCommand.PropertyChanged += OnPropertyChanged;
 
-      DecompileTranslationCommand = new AsyncRelayCommand(OnDecompileTranslationExecute, OnCanDecompileTranslationExecute);
+      DecompileTranslationCommand = new AsyncRelayCommand(OnDecompileTranslationExecute, OnCanDecompileTranslationExecute, AsyncRelayCommandOptions.FlowExceptionsToTaskScheduler);
       DecompileTranslationCommand.PropertyChanged += OnPropertyChanged;
 
-      CompileTranslationCommand = new AsyncRelayCommand(OnCompileTraslationExecute, OnCanCompileTranslationExecute);
+      CompileTranslationCommand = new AsyncRelayCommand(OnCompileTraslationExecute, OnCanCompileTranslationExecute, AsyncRelayCommandOptions.FlowExceptionsToTaskScheduler);
       CompileTranslationCommand.PropertyChanged += OnPropertyChanged;
 
-      ExtractScriptsCommand = new AsyncRelayCommand(OnExtractScriptsExecute, OnCanExtractScriptsExecute);
+      ExtractScriptsCommand = new AsyncRelayCommand(OnExtractScriptsExecute, OnCanExtractScriptsExecute, AsyncRelayCommandOptions.FlowExceptionsToTaskScheduler);
       ExtractScriptsCommand.PropertyChanged += OnPropertyChanged;
 
-      InjectScriptCommand = new AsyncRelayCommand(OnInjectScriptExecute, OnCanInjectScriptExecute);
+      InjectScriptCommand = new AsyncRelayCommand(OnInjectScriptExecute, OnCanInjectScriptExecute, AsyncRelayCommandOptions.FlowExceptionsToTaskScheduler);
       InjectScriptCommand.PropertyChanged += OnPropertyChanged;
 
-      ReplaceScriptTextCommand = new AsyncRelayCommand(OnReplaceScriptTextCommand, OnCanReplaceScriptTextCommand);
+      ReplaceScriptTextCommand = new AsyncRelayCommand(OnReplaceScriptTextCommand, OnCanReplaceScriptTextCommand, AsyncRelayCommandOptions.FlowExceptionsToTaskScheduler);
       ReplaceScriptTextCommand.PropertyChanged += OnPropertyChanged;
 
-      ExtractGameIdCommand = new AsyncRelayCommand(OnExtractGameIdExecute, OnCanExtractGameIdExecute);
+      ExtractGameIdCommand = new AsyncRelayCommand(OnExtractGameIdExecute, OnCanExtractGameIdExecute, AsyncRelayCommandOptions.FlowExceptionsToTaskScheduler);
       ExtractGameIdCommand.PropertyChanged += OnPropertyChanged;
+
+      GenerateModulesListCommand = new AsyncRelayCommand(OnGenerateModulesListExecute, OnCanGenerateModulesList, AsyncRelayCommandOptions.FlowExceptionsToTaskScheduler);
+      GenerateModulesListCommand.PropertyChanged += OnPropertyChanged;
 
       ShowRoomManagerCommand = new RelayCommand(OnShowRoomManagerExecute);
     }
@@ -604,12 +667,14 @@ namespace AGSUnpacker.UI.Views.Windows
       public string Title;
       public string Filter;
       public bool Multiselect;
+      public string InitialDirectory;
 
       public DialogOptions()
       {
         Title = string.Empty;
         Filter = string.Empty;
         Multiselect = false;
+        InitialDirectory = null;
       }
     }
   }

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 
+using AGSUnpacker.Lib.Game.ExtensionBlocks;
 using AGSUnpacker.Lib.Game.View;
 using AGSUnpacker.Lib.Shared;
 using AGSUnpacker.Lib.Shared.FormatExtensions;
@@ -26,11 +27,14 @@ namespace AGSUnpacker.Lib.Game
 
     private static readonly int LIMIT_MAX_GLOBAL_MESSAGES = 500;
 
+    public static readonly int EncodingOption = 49;
+
     public int Version;
     public string VersionEngine;
     public string[] Capabilities;
 
     public List<string> ExtensionBlocks;
+    public AGSObjectNamesExt extObjectNames;
 
     public AGSGameSetupStruct setup;
     public char[] save_guid;
@@ -71,6 +75,8 @@ namespace AGSUnpacker.Lib.Game
     public int PluginVersion;
     public AGSPluginInfo[] Plugins;
 
+    public Dictionary<string, string> GameInfo;
+
     public AGSGameData()
     {
       Version = 0;
@@ -78,6 +84,7 @@ namespace AGSUnpacker.Lib.Game
       Capabilities = Array.Empty<string>();
 
       ExtensionBlocks = new List<string>();
+      extObjectNames = null;
 
       setup = new AGSGameSetupStruct();
       save_guid = new char[0];
@@ -117,6 +124,8 @@ namespace AGSUnpacker.Lib.Game
 
       PluginVersion = 0;
       Plugins = Array.Empty<AGSPluginInfo>();
+
+      GameInfo = new();
     }
 
     public static AGSGameData ReadFromFile(string filepath)
@@ -703,6 +712,336 @@ namespace AGSUnpacker.Lib.Game
       return true;
     }
 
+    private bool ReadObjNamesExtensionBlock(BinaryReader reader)
+    {
+      extObjectNames = new AGSObjectNamesExt
+      {
+        GameName = reader.ReadPrefixedString32(),
+        SaveGameFolderName = reader.ReadPrefixedString32()
+      };
+
+      int charactersCount = reader.ReadInt32();
+      for (int i = 0; i < charactersCount; ++i)
+      {
+        extObjectNames.Characters.Add
+        (
+          new ObjectNameExt
+          {
+            ScriptName = reader.ReadPrefixedString32(),
+            RealName = reader.ReadPrefixedString32()
+          }
+        );
+      }
+
+      int inventoryItemsCount = reader.ReadInt32();
+      for (int i = 0; i < inventoryItemsCount; ++i)
+      {
+        extObjectNames.InventoryItems.Add
+        (
+          new ObjectNameExt
+          {
+            RealName = reader.ReadPrefixedString32()
+          }
+        );
+      }
+
+      int cursorsCount = reader.ReadInt32();
+      for (int i = 0; i < cursorsCount; ++i)
+      {
+        extObjectNames.Cursors.Add
+        (
+          new ObjectNameExt
+          {
+            RealName = reader.ReadPrefixedString32()
+          }
+        );
+      }
+
+      int audioClipsCount = reader.ReadInt32();
+      for (int i = 0; i < audioClipsCount; ++i)
+      {
+        extObjectNames.AudioClips.Add
+        (
+          new ObjectNameExt
+          {
+            ScriptName = reader.ReadPrefixedString32(),
+            RealName = reader.ReadPrefixedString32()
+          }
+        );
+      }
+
+      return true;
+    }
+
+    private bool WriteObjNamesExtensionBlock(BinaryWriter writer)
+    {
+      writer.WritePrefixedString32(extObjectNames.GameName);
+      writer.WritePrefixedString32(extObjectNames.SaveGameFolderName);
+
+      writer.Write((Int32)extObjectNames.Characters.Count);
+      for (int i = 0; i < extObjectNames.Characters.Count; ++i)
+      {
+        writer.WritePrefixedString32(extObjectNames.Characters[i].ScriptName);
+        writer.WritePrefixedString32(extObjectNames.Characters[i].RealName);
+      }
+
+      writer.Write((Int32)extObjectNames.InventoryItems.Count);
+      for (int i = 0; i < extObjectNames.InventoryItems.Count; ++i)
+      {
+        writer.WritePrefixedString32(extObjectNames.InventoryItems[i].RealName);
+      }
+
+      writer.Write((Int32)extObjectNames.Cursors.Count);
+      for (int i = 0; i < extObjectNames.Cursors.Count; ++i)
+      {
+        writer.WritePrefixedString32(extObjectNames.Cursors[i].RealName);
+      }
+
+      writer.Write((Int32)extObjectNames.AudioClips.Count);
+      for (int i = 0; i < extObjectNames.AudioClips.Count; ++i)
+      {
+        writer.WritePrefixedString32(extObjectNames.AudioClips[i].ScriptName);
+        writer.WritePrefixedString32(extObjectNames.AudioClips[i].RealName);
+      }
+
+      return true;
+    }
+
+    private bool ReadInteractionEventsBlock(BinaryReader reader)
+    {
+      // characters
+      int charactersCount = reader.ReadInt32();
+      if (charactersCount != characters.Length)
+        return false;
+
+      for (int i = 0; i < charactersCount; ++i)
+        characters[i].interactions.LoadFromStream_v362(reader);
+
+      // inventory items
+      int invCount = reader.ReadInt32();
+      if (invCount != inventoryItems.Length)
+        return false;
+
+      for (int i = 0; i < invCount; ++i)
+        inventoryItems[i].interactions.LoadFromStream_v362(reader);
+
+      // guis
+      int guisCount = reader.ReadInt32();
+      if (guisCount != guis.Length)
+        return false;
+
+      for (int i = 0; i < guisCount; ++i)
+        guis[i].ScriptModule = reader.ReadPrefixedString32();
+
+      return true;
+    }
+
+    private bool WriteInteractionEventsBlock(BinaryWriter writer)
+    {
+      writer.Write((Int32)characters.Length);
+      for (int i = 0; i < characters.Length; ++i)
+        characters[i].interactions.WriteToStream_v362(writer);
+
+      writer.Write((Int32)inventoryItems.Length);
+      for (int i = 0; i < inventoryItems.Length; ++i)
+        inventoryItems[i].interactions.WriteToStream_v362(writer);
+
+      writer.Write((Int32)guis.Length);
+      for (int i = 0; i < guis.Length; ++i)
+        writer.WritePrefixedString32(guis[i].ScriptModule);
+
+      return true;
+    }
+
+    private bool ReadInteractionEventsExBlock(BinaryReader reader)
+    {
+      globalScript.Name = reader.ReadPrefixedString32();
+      dialogScript.Name = reader.ReadPrefixedString32();
+
+      int modulesCount = reader.ReadInt32();
+      if (modulesCount != scriptModules.Length)
+        return false;
+
+      for (int i = 0; i < modulesCount; ++i)
+        scriptModules[i].Name = reader.ReadPrefixedString32();
+
+      return ReadInteractionEventsBlock(reader);
+    }
+
+    private bool WriteInteractionEventsExBlock(BinaryWriter writer)
+    {
+      writer.WritePrefixedString32(globalScript.Name);
+      writer.WritePrefixedString32(dialogScript.Name);
+
+      writer.Write((Int32)scriptModules.Length);
+      for (int i = 0; i < scriptModules.Length; ++i)
+        writer.WritePrefixedString32(scriptModules[i].Name);
+
+      return WriteInteractionEventsBlock(writer);
+    }
+
+    private bool ReadGUIControlsBlock(BinaryReader reader)
+    {
+      int buttonsCount = reader.ReadInt32();
+      if (buttonsCount != buttons.Length)
+        return false;
+
+      for (int i = 0; i < buttonsCount; ++i)
+      {
+        buttons[i].padding_x = reader.ReadInt32();
+        buttons[i].padding_y = reader.ReadInt32();
+        // ignore reserved fields
+        _ = reader.ReadArrayInt32(2);
+      }
+
+      return true;
+    }
+
+    private bool WriteGUIControlsBlock(BinaryWriter writer)
+    {
+      writer.Write((Int32)buttons.Length);
+      for (int i = 0; i < buttons.Length; ++i)
+      {
+        writer.Write((Int32)buttons[i].padding_x);
+        writer.Write((Int32)buttons[i].padding_y);
+        // nullify reserved fields
+        writer.Write((Int32)0);
+        writer.Write((Int32)0);
+      }
+
+      return true;
+    }
+
+    private bool ReadGameInfoBlock(BinaryReader reader)
+    {
+      int count = reader.ReadInt32();
+      for (int i = 0; i < count; ++i)
+      {
+        string key = reader.ReadPrefixedString32();
+        string value = reader.ReadPrefixedString32();
+        GameInfo.Add(key, value);
+      }
+
+      return true;
+    }
+
+    private bool WriteGameInfoBlock(BinaryWriter writer)
+    {
+      writer.Write((Int32)GameInfo.Count);
+      foreach (var (key, value) in GameInfo)
+      {
+        writer.WritePrefixedString32(key);
+        writer.WritePrefixedString32(value);
+      }
+
+      return true;
+    }
+
+    private bool ReadDialogsBlock(BinaryReader reader)
+    {
+      int dialogCount = reader.ReadInt32();
+
+      // NOTE(adm244): overwrites old data
+      setup.dialogs_count = dialogCount;
+      dialogs = new AGSDialog[dialogCount];
+
+      for (int i = 0; i < dialogCount; ++i)
+        dialogs[i].LoadFromStream_v363(reader);
+
+      return true;
+    }
+
+    private bool WriteDialogsBlock(BinaryWriter writer)
+    {
+      writer.Write((Int32)setup.dialogs_count);
+      for (int i = 0; i < setup.dialogs_count; ++i)
+        dialogs[i].WriteToStream_v363(writer);
+
+      return true;
+    }
+
+    private bool ReadGUIControlsExBlock(BinaryReader reader)
+    {
+      // buttons
+      int buttonsCount = reader.ReadInt32();
+      if (buttonsCount != buttons.Length)
+        return false;
+
+      for (int i = 0; i < buttonsCount; ++i)
+        buttons[i].LoadFromStream_v363(reader);
+
+      // labels
+      int labelsCount = reader.ReadInt32();
+      if (labelsCount != labels.Length)
+        return false;
+
+      for (int i = 0; i < labelsCount; ++i)
+        labels[i].LoadFromStream_v363(reader);
+
+      // inventory windows
+      int invwindowsCount = reader.ReadInt32();
+      if (invwindowsCount != inventoryWindows.Length)
+        return false;
+
+      for (int i = 0; i < invwindowsCount; ++i)
+        inventoryWindows[i].LoadFromStream_v363(reader);
+
+      // sliders
+      int slidersCount = reader.ReadInt32();
+      if (slidersCount != sliders.Length)
+        return false;
+
+      for (int i = 0; i < slidersCount; ++i)
+        sliders[i].LoadFromStream_v363(reader);
+
+      // textboxes
+      int textboxesCount = reader.ReadInt32();
+      if (textboxesCount != textboxes.Length)
+        return false;
+
+      for (int i = 0; i < textboxesCount; ++i)
+        textboxes[i].LoadFromStream_v363(reader);
+
+      // listboxes
+      int listboxesCount = reader.ReadInt32();
+      if (listboxesCount != listboxes.Length)
+        return false;
+
+      for (int i = 0; i < listboxesCount; ++i)
+        listboxes[i].LoadFromStream_v363(reader);
+
+      return true;
+    }
+
+    private bool WriteGUIControlsExBlock(BinaryWriter writer)
+    {
+      writer.Write((Int32)buttons.Length);
+      for (int i = 0; i < buttons.Length; ++i)
+        buttons[i].WriteToStream_v363(writer);
+
+      writer.Write((Int32)labels.Length);
+      for (int i = 0; i < labels.Length; ++i)
+        labels[i].WriteToStream_v363(writer);
+
+      writer.Write((Int32)inventoryWindows.Length);
+      for (int i = 0; i < inventoryWindows.Length; ++i)
+        inventoryWindows[i].WriteToStream_v363(writer);
+
+      writer.Write((Int32)sliders.Length);
+      for (int i = 0; i < sliders.Length; ++i)
+        sliders[i].WriteToStream_v363(writer);
+
+      writer.Write((Int32)textboxes.Length);
+      for (int i = 0; i < textboxes.Length; ++i)
+        textboxes[i].WriteToStream_v363(writer);
+
+      writer.Write((Int32)listboxes.Length);
+      for (int i = 0; i < listboxes.Length; ++i)
+        listboxes[i].WriteToStream_v363(writer);
+
+      return true;
+    }
+
     private bool ReadExtensionBlock(BinaryReader reader, string id, long size)
     {
       bool result = false;
@@ -717,7 +1056,36 @@ namespace AGSUnpacker.Lib.Game
           result = ReadCursorsExtensionBlock(reader);
           break;
 
+        case "v361_objnames":
+          result = ReadObjNamesExtensionBlock(reader);
+          break;
+
+        case "v362_interevents":
+          result = ReadInteractionEventsBlock(reader);
+          break;
+
+        case "v362_interevent2":
+          result = ReadInteractionEventsExBlock(reader);
+          break;
+
+        case "v362_guictrls":
+          result = ReadGUIControlsBlock(reader);
+          break;
+
+        case "v363_gameinfo":
+          result = ReadGameInfoBlock(reader);
+          break;
+
+        case "v363_dialogsnew":
+          result = ReadDialogsBlock(reader);
+          break;
+
+        case "v363_guictrls":
+          result = ReadGUIControlsExBlock(reader);
+          break;
+
         default:
+          // TODO(adm244): better logging system (show warnings to user but continue execution)
           Debug.Assert(false, $"Data extension block '{id}' is not supported!");
           break;
       }
@@ -737,6 +1105,27 @@ namespace AGSUnpacker.Lib.Game
 
         case "v360_cursors":
           return WriteCursorsExtensionBlock(writer);
+
+        case "v361_objnames":
+          return WriteObjNamesExtensionBlock(writer);
+
+        case "v362_interevents":
+          return WriteInteractionEventsBlock(writer);
+
+        case "v362_interevent2":
+          return WriteInteractionEventsExBlock(writer);
+
+        case "v362_guictrls":
+          return WriteGUIControlsBlock(writer);
+
+        case "v363_gameinfo":
+          return WriteGameInfoBlock(writer);
+
+        case "v363_dialogsnew":
+          return WriteDialogsBlock(writer);
+
+        case "v363_guictrls":
+          return WriteGUIControlsExBlock(writer);
 
         default:
           throw new NotSupportedException($"Unknown game data extension block: {id}.");

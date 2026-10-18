@@ -5,6 +5,13 @@ It features extraction of game assets from executable (\*.exe) or archive files 
 
 Written in .NET C#.
 
+---
+
+For AGS script (scom3) **decompilation** refer to [Ghidra ReAGS](https://github.com/adm244/Ghidra-ReAGS).\
+For game specific script **patches** refer to [ags-translations-fixes](https://github.com/adm244/ags-translations-fixes).
+
+Development versions can be downloaded from [Actions](https://github.com/adm244/AGSUnpacker/actions) tab.
+
 ## Supported versions
 
 This project aims to support **all officially released** 2.x and 3.x AGS versions. It includes support for obsolete engines before 2.54 that have no support in publically released source code.
@@ -37,7 +44,7 @@ The list of features is not definitive nor full it just outlines high-level repr
     - [x] Replacing strings in scripts from translation file
     - [ ] Script disassembler
     - [ ] Script assembler
-    - [ ] Script decompiler
+    - [ ] Script decompiler ([ghidra extension](https://github.com/adm244/Ghidra-ReAGS) is available)
 - [ ] Rooms
     - [x] Preview backgrounds
     - [x] Replace backgrounds
@@ -98,11 +105,11 @@ If everything went OK you'll find compiled program in `build/package` folder.
 
 In terminal navigate to AGSUnpacker root folder and use this dotnet command:
 ```sh
-dotnet publish AGSUnpacker.UI/AGSUnpacker.UI.csproj --os win -c Release -a x64 --no-self-contained -o build/package/
+dotnet publish AGSUnpacker.UI/AGSUnpacker.UI.csproj --os win -c Release -a x64 --no-self-contained /p:TargetOS="win" -o build/package/
 ```
 or to compile 32-bit executables:
 ```sh
-dotnet publish AGSUnpacker.UI/AGSUnpacker.UI.csproj --os win -c Release -a x86 --no-self-contained -o build/package/
+dotnet publish AGSUnpacker.UI/AGSUnpacker.UI.csproj --os win -c Release -a x86 --no-self-contained /p:TargetOS="win" -o build/package/
 ```
 
 If everything went OK you'll find compiled program in `build/package` folder.

@@ -26,15 +26,11 @@ namespace AGSUnpacker.Lib.Utils
         int changedTexts = 0;
         for (int j = 0; j < script.StringsReferenced.Length; ++j)
         {
-          int index = translation.OriginalLines.IndexOf(script.StringsReferenced[j].Text);
-          if (index >= 0)
+          bool found = translation.Lines.TryGetValue(script.StringsReferenced[j].Text, out string translated);
+          if (found && !string.IsNullOrEmpty(translated))
           {
-            string replacementString = translation.TranslatedLines[index];
-            if (!string.IsNullOrEmpty(replacementString))
-            {
-              script.StringsReferenced[j].Text = replacementString;
-              ++changedTexts;
-            }
+            script.StringsReferenced[j].Text = translated;
+            ++changedTexts;
           }
         }
 
@@ -46,21 +42,22 @@ namespace AGSUnpacker.Lib.Utils
       }
     }
 
-    public static void Inject(string targetFile, string scriptFile)
+    public static void Inject(string targetFile, string[] scriptFiles)
     {
       // TODO(adm244): determine file by it's signature
       string extension = Path.GetExtension(targetFile).ToLower();
       if (extension == ".dta")
-        InjectIntoData(targetFile, scriptFile);
+        InjectIntoData(targetFile, scriptFiles);
       else
-        InjectIntoRoom(targetFile, scriptFile);
+      {
+        // FIXME(adm244): silently inject first script, maybe show warning message
+        InjectIntoRoom(targetFile, scriptFiles[0]);
+      }
     }
 
-    private static void InjectIntoData(string targetFile, string scriptFile)
+    private static void InjectIntoData(AGSGameData gameData, string scriptFile)
     {
-      AGSGameData gameData = AGSGameData.ReadFromFile(targetFile);
       AGSScript injectee = AGSScript.ReadFromFile(scriptFile);
-
       if (injectee.Sections.Length > 0)
       {
         ((Action)(() => {
@@ -86,6 +83,16 @@ namespace AGSUnpacker.Lib.Utils
             "Sections length mismatch. Script you're trying to inject is too old.");
 
         gameData.globalScript = injectee;
+      }
+    }
+
+    private static void InjectIntoData(string targetFile, string[] scriptFiles)
+    {
+      AGSGameData gameData = AGSGameData.ReadFromFile(targetFile);
+
+      for (int i = 0; i < scriptFiles.Length; ++i)
+      {
+        InjectIntoData(gameData, scriptFiles[i]);
       }
 
       File.Copy(targetFile, targetFile + ".backup", true);
@@ -133,63 +140,33 @@ namespace AGSUnpacker.Lib.Utils
     {
       if (Directory.Exists(sourceFolder))
       {
-        AGSGameData gameData = new AGSGameData();
-        List<AGSRoom> rooms = new List<AGSRoom>();
-
-        string[] filenames = Directory.GetFiles(sourceFolder, "*", SearchOption.AllDirectories);
-
-        Console.WriteLine("Searching asset files...");
-
-        for (int i = 0; i < filenames.Length; ++i)
+        string[] files = Directory.GetFiles(sourceFolder, "*", SearchOption.AllDirectories);
+        for (int i = 0; i < files.Length; ++i)
         {
-          string fileExtension = Path.GetExtension(filenames[i].ToLower());
+          string fileName = Path.GetFileName(files[i]);
+          string fileExtension = Path.GetExtension(files[i].ToLower());
 
           if (fileExtension == ".dta")
           {
-            Console.Write("\tParsing {0} data file...", Path.GetFileName(filenames[i]));
+            Console.Write($"Parsing {fileName} data file...");
+            AGSGameData gameData = AGSGameData.ReadFromFile(files[i]);
+            Console.WriteLine(" Done!");
 
-            gameData.LoadFromFile(filenames[i]);
-
+            Console.Write("Extracting scripts from game data...");
+            string globalScriptsFolder = Path.Combine(targetFolder, "global");
+            ExtractGameDataScripts(gameData, globalScriptsFolder);
             Console.WriteLine(" Done!");
           }
           else if (fileExtension == ".crm")
           {
-            Console.Write("\tParsing {0} room file...", Path.GetFileName(filenames[i]));
+            Console.Write($"Parsing {fileName} room file...");
+            AGSRoom room = AGSRoom.ReadFromFile(files[i], Path.GetFileNameWithoutExtension(files[i]));
+            Console.WriteLine(" Done!");
 
-            AGSRoom room = new AGSRoom(Path.GetFileNameWithoutExtension(filenames[i]));
-            room.ReadFromFileDeprecated(filenames[i]);
-            rooms.Add(room);
-
+            Console.Write($"Extracting {fileName} script...");
+            ExtractRoomScript(room, targetFolder);
             Console.WriteLine(" Done!");
           }
-        }
-
-        Console.Write("Extracting scripts from game data...");
-        string globalScriptsFolder = Path.Combine(targetFolder, "global");
-        ExtractGameDataScripts(gameData, globalScriptsFolder);
-        Console.WriteLine(" Done!");
-
-        for (int i = 0; i < rooms.Count; ++i)
-        {
-          Console.Write($"Extracting room{i} script...");
-          if (!string.IsNullOrEmpty(rooms[i].Script.SourceCode))
-          {
-            string filename = Path.GetFileNameWithoutExtension(rooms[i].Name);
-            if (string.IsNullOrEmpty(filename))
-            {
-              filename = Path.GetRandomFileName();
-            }
-            filename += ".txt";
-
-            string targetFilepath = Path.Combine(targetFolder, filename);
-
-            Directory.CreateDirectory(targetFolder);
-
-            File.WriteAllText(targetFilepath, rooms[i].Script.SourceCode);
-          }
-
-          DumpScript(rooms[i].Script.SCOM3, targetFolder, rooms[i].Name);
-          Console.WriteLine(" Done!");
         }
 
         return true;
@@ -203,12 +180,17 @@ namespace AGSUnpacker.Lib.Utils
 
     private static void ExtractGameDataScripts(AGSGameData gameData, string targetFolder)
     {
+      // NOTE(adm244): extracting dialog and global scripts into a separate folder
+      //  because script modules with exact same name will overwrite them!
+      string builtinFolder = Path.Combine(targetFolder, "built-in");
+      Directory.CreateDirectory(builtinFolder);
+
       // FIXME(adm244): now that's just stupid, assign null if it's not initialized
       if (gameData.dialogScript.Code.Length > 0)
-        DumpScript(gameData.dialogScript, targetFolder, "DialogScripts");
+        DumpScript(gameData.dialogScript, builtinFolder, "DialogScript");
 
       if (gameData.globalScript.Code.Length > 0)
-      DumpScript(gameData.globalScript, targetFolder, "GlobalScript");
+        DumpScript(gameData.globalScript, builtinFolder, "GlobalScript");
 
       for (int i = 0; i < gameData.scriptModules.Length; ++i)
       {
@@ -218,6 +200,25 @@ namespace AGSUnpacker.Lib.Utils
 
         DumpScript(gameData.scriptModules[i], targetFolder, filename);
       }
+    }
+
+    private static void ExtractRoomScript(AGSRoom room, string targetFolder)
+    {
+      if (!string.IsNullOrEmpty(room.Script.SourceCode))
+      {
+        string filename = Path.GetFileNameWithoutExtension(room.Name);
+        if (string.IsNullOrEmpty(filename))
+        {
+          filename = Path.GetRandomFileName();
+        }
+        filename += ".txt";
+
+        string targetFilepath = Path.Combine(targetFolder, filename);
+        Directory.CreateDirectory(targetFolder);
+        File.WriteAllText(targetFilepath, room.Script.SourceCode);
+      }
+
+      DumpScript(room.Script.SCOM3, targetFolder, room.Name);
     }
 
     private static void DumpScript(AGSScript script, string targetFolder, string name = null)
@@ -240,6 +241,28 @@ namespace AGSUnpacker.Lib.Utils
           script.WriteToStream(writer);
         }
       }
+    }
+
+    public static void ExtractModulesList(string targetFile, string outputFile)
+    {
+      AGSGameData data = new();
+      data.LoadFromFile(targetFile);
+
+      string[] modules = new string[data.scriptModules.Length];
+
+      for (int i = 0; i < modules.Length; ++i)
+      {
+        // TODO(adm244): refactor this into AGSScript member function?
+        string name = data.scriptModules[i].Name;
+        if (string.IsNullOrWhiteSpace(name) && (data.scriptModules[i].Sections.Length > 0))
+          name = Path.GetFileNameWithoutExtension(data.scriptModules[i].Sections[^1].Name);
+        if (string.IsNullOrWhiteSpace(name))
+          name = $"globalscript{i}";
+
+        modules[i] = $"{name}.{ScriptFileExtension}";
+      }
+
+      File.WriteAllLines(outputFile, modules);
     }
   }
 }
